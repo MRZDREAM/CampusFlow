@@ -1,0 +1,28 @@
+# Java / Maven build output; Maven Wrapper files should be tracked.
+/target/
+*.class
+
+# Local editor settings.
+.idea/
+*.iml
+.vscode/
+
+# Local environment and credentials; only examples are tracked.
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.jks
+
+# Local runtime data and logs.
+/local-data/
+/logs/
+*.log
+
+# Operating system files.
+.DS_Store
+Thumbs.db
+Desktop.ini

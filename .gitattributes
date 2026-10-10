@@ -1,0 +1,4 @@
+# Normalize text files; keep Windows launchers compatible with Windows.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf

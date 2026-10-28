@@ -53,16 +53,23 @@ starts_at / ends_at 使用 DATETIME(6)，保存 UTC 时间；该类型本身不�
 
 真实 MySQL 集成测试验证迁移与上述字段、关联约束。预约事务和并发测试尚未实现。
 
+资源管理已通过 JPA 映射 resources 的 id、name、description、status。创建时规范化名称，缺失描述保存为空字符串，状态初始化为 OPEN；客户端不能通过创建请求指定编号或状态。资源名称不唯一。同名设备通过 id 区分。
+
+资源接口提供创建、按编号读取和按编号升序分页读取。页号为 0～10000，每页 1～100 条，默认 20。读取关闭状态资源也会返回其资料，当前没有状态修改接口。列表采用普通偏移分页，多次查询在并发写入时不保证同一快照。
+
+资源的创建和更新时间由数据库维护，当前 JPA 实体暂不映射这些列。状态枚举明确映射为 VARCHAR，与现有迁移保持一致。Hibernate 仅 validate，迁移仍由 Flyway 执行。
+
 ## 接口草稿
 
 | 方法与路径 | 行为 |
 | --- | --- |
-| POST /api/v1/resources | 创建资源 |
-| GET /api/v1/resources | 查询资源列表 |
+| POST /api/v1/resources | 已实现：创建资源，返回 201 和详情 Location |
+| GET /api/v1/resources | 已实现：分页资源列表 |
+| GET /api/v1/resources/{id} | 已实现：查询详情；不存在返回 404 |
 | POST /api/v1/resources/{resourceId}/slots | 创建资源时段 |
 | GET /api/v1/resources/{resourceId}/slots | 查询资源时段与可用名额 |
 | POST /api/v1/reservations | 创建预约 |
 | GET /api/v1/reservations/{reservationId} | 查询预约状态 |
 | POST /api/v1/reservations/{reservationId}/cancellation | 取消预约 |
 
-以上业务接口尚未实现。当前可调用端点是 Actuator 健康检查。认证接入后，业务用户身份从认证上下文取得；接口不能信任客户端传入的任意用户身份。
+资源创建和查询已实现，其余业务接口仍是草稿。认证与操作授权尚未接入；认证接入后，业务用户身份从认证上下文取得，接口不能信任客户端传入的任意用户身份。

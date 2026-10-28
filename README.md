@@ -13,9 +13,11 @@
 - MySQL 8.4 数据源与连接池，UTC 会话时间和外置本地凭据。
 - Flyway 11.20.3 版本化建表、校验已应用脚本；资源与时段的数据库约束、外键和查询索引。
 - 真实 MySQL 集成测试：迁移重入、校验和变更、字段约束、关联完整性与就绪探针。
+- 资源创建、详情与分页列表接口；请求校验、名称规范化和明确的 400 / 404 错误响应。
+- JPA 映射校验、服务层事务和独立响应 DTO；表结构仍由 Flyway 管理。
 - GitHub Actions 在 Windows / Linux 上执行构建与测试。
 
-资源和时段的表结构已建立；领域对象到数据访问层的映射、业务接口、预约事务和并发控制尚未实现。认证、Redis、RabbitMQ 与候补流程属于后续实现范围；性能结果将在真实压测后记录。
+资源管理接口已接入数据库。时段管理接口、预约事务和并发控制尚未实现。当前接口用于开发验证，身份认证与操作授权尚未接入。Redis、RabbitMQ 与候补流程属于后续实现范围；性能结果将在真实压测后记录。
 
 ## 构建与运行
 
@@ -69,22 +71,47 @@ curl http://localhost:8080/actuator/health
 .\mvnw.cmd --batch-mode --no-transfer-progress -Pmysql-it verify
 ```
 
-Linux / macOS 使用 `./mvnw`。`mysql-it` 是 Maven 构建配置；它启用 Failsafe 执行 `DatabaseMigrationIT`，不是 Spring profile。集成测试固定使用 `campus_flow_it`，数据写入测试通过事务回滚，测试不调用 clean。
+Linux / macOS 使用 `./mvnw`。`mysql-it` 是 Maven 构建配置；它启用 Failsafe 执行 `DatabaseMigrationIT` 和 `ResourceApiIT`，不是 Spring profile。集成测试固定使用 `campus_flow_it`。数据库约束测试的数据通过事务回滚；真实 HTTP 测试在请求提交后，仅清理各自生成的随机名称记录。测试不调用 Flyway clean。
 
 CI 除 Windows / Linux 的普通构建外，还在独立 MySQL 服务中执行同一套数据库测试。工作流中的密码仅用于每次运行时创建并销毁的 CI 数据库。
+
+## 资源接口
+
+| 方法与路径 | 行为 | 成功响应 |
+| --- | --- | --- |
+| POST /api/v1/resources | 创建资源 | 201，Location 指向详情地址 |
+| GET /api/v1/resources/{id} | 按正整数编号查询 | 200；不存在时为 404 |
+| GET /api/v1/resources?page=0&size=20 | 按编号升序分页查询 | 200，含 content 和分页统计 |
+
+创建请求只接收 name 和 description。名称去掉首尾空白后必须有内容，长度上限为 120；描述可省略，上限为 1000。长度按 Java 字符串的 UTF-16 单元计。编号由数据库分配，初始状态由服务端设为 OPEN。请求中的额外字段当前会被忽略，不能用于指定编号或状态。
+
+```json
+{"name":"GPU 工作站","description":"共享计算设备"}
+```
+
+响应字段为 id、name、description、status。未提供描述时返回空字符串。名称不要求唯一，同名资源可以代表不同设备。
+
+分页从 0 开始，page 范围为 0～10000，size 范围为 1～100，默认分别为 0 和 20。超出已有数据的页返回空 content。采用独立分页响应，避免把框架内部对象作为公开 JSON 合约；并发插入期间不保证多次分页请求共享同一快照。
+
+非法字段返回 400 / VALIDATION_FAILED，并列出 errors；错误 JSON 或参数类型返回 400 / INVALID_REQUEST；资源不存在返回 404 / RESOURCE_NOT_FOUND。错误响应使用 application/problem+json。
+
+Hibernate 使用 ddl-auto: validate，只校验已映射的列，不修改结构。资源创建和更新时间仍由数据库默认值维护，本批暂不映射和返回这些列。open-in-view 关闭，响应 DTO 在服务事务内构建。
 
 ## 项目结构
 
 ```text
 src/main/java/io/github/mrzdream/campusflow/
 ├── CampusFlowApplication.java
-└── resource/domain/
-    ├── SlotWindow.java
-    ├── SlotCapacity.java
-    └── CapacityUnavailableException.java
+├── resource/
+│   ├── api/                 # HTTP 路由
+│   ├── application/         # 服务与事务
+│   ├── domain/              # 资源实体、状态和时段值对象
+│   ├── dto/                 # 请求与响应数据
+│   └── persistence/         # JPA Repository
+└── web/                     # HTTP 异常响应
 ```
 
-业务代码按功能模块组织。领域对象负责局部业务规则；持久化事务、数据库约束及并发控制由后续应用服务与存储层共同实现。
+业务代码按功能模块组织。领域对象负责局部业务规则；资源服务组织创建和查询事务。预约涉及的多表一致性与并发控制将在相应模块实现。
 
 ## 设计与演进
 

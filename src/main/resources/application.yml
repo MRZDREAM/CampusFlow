@@ -15,6 +15,14 @@ spring:
     clean-disabled: true
     validate-on-migrate: true
     baseline-on-migrate: false
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
   sql:
     init:
       mode: never

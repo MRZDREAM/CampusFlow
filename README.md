@@ -10,13 +10,28 @@
 - HTTP 404 / 405 使用 RFC 9457 Problem Details 响应。
 - 不可变时段与容量对象，校验时间边界、区间重叠、预约与释放的容量约束。
 - 领域边界测试和真实 HTTP 集成测试。
+- MySQL 8.4 数据源与连接池，UTC 会话时间和外置本地凭据。
+- Flyway 11.20.3 版本化建表、校验已应用脚本；资源与时段的数据库约束、外键和查询索引。
+- 真实 MySQL 集成测试：迁移重入、校验和变更、字段约束、关联完整性与就绪探针。
 - GitHub Actions 在 Windows / Linux 上执行构建与测试。
 
-当前领域对象尚未接入数据库或预约接口。持久化、认证、Redis、RabbitMQ 与候补流程属于后续实现范围；性能结果将在真实压测后记录。
+资源和时段的表结构已建立；领域对象到数据访问层的映射、业务接口、预约事务和并发控制尚未实现。认证、Redis、RabbitMQ 与候补流程属于后续实现范围；性能结果将在真实压测后记录。
 
 ## 构建与运行
 
-需要完整的 JDK 21。`JAVA_HOME` 指向 JDK 根目录；首次构建需要联网下载 Maven 与项目依赖。
+需要完整的 JDK 21。`JAVA_HOME` 指向 JDK 根目录；首次构建需要联网下载 Maven 与项目依赖。运行应用需要 MySQL 8.4。
+
+将 `.env.example` 复制为 `.env`，替换两个示例密码，分别用于应用用户和数据库管理员。`.env` 使用 properties 兼容格式，值不额外包引号；文件不会纳入 Git。应用从当前工作目录读取该文件，系统环境变量可以覆盖其中的配置。
+
+如果已安装 Docker Compose，可在项目根目录启动固定版本的本地数据库：
+
+```text
+docker compose up -d --wait mysql
+```
+
+默认端口为 `127.0.0.1:13306`，数据库为 `campus_flow`，应用账号为 `campus_flow`。初始化脚本还创建独立的 `campus_flow_it` 测试库，并赋予该账号测试库权限。已有数据卷不会重复执行容器初始化脚本。
+
+也可以使用自行安装的 MySQL。需事先创建上述两个数据库和应用账号，并将连接信息写入 `.env` 或对应环境变量。应用不使用 root 账号。容器停止命令为 `docker compose stop mysql`，停止不会清空数据卷。
 
 Windows（CMD 或 PowerShell）：
 
@@ -40,7 +55,23 @@ java -jar target/campus-flow-0.1.0-SNAPSHOT.jar
 curl http://localhost:8080/actuator/health
 ```
 
-预期返回 HTTP 200，JSON 中的 `status` 为 `UP`。`/actuator/health/liveness` 和 `/actuator/health/readiness` 分别用于存活、就绪检查；根健康端点还会列出探针分组名称。当前探针只反映应用状态；接入外部依赖后需重新定义就绪条件。
+预期返回 HTTP 200，JSON 中的 `status` 为 `UP`。`/actuator/health/liveness` 检查应用存活状态；`/actuator/health/readiness` 同时检查应用就绪状态和数据库连接。数据库中断后，就绪检查应返回 HTTP 503，存活检查不因数据库中断而失败。健康检查不公开组件详情。
+
+## 数据库迁移与验证
+
+应用启动时，Flyway 按顺序执行 `src/main/resources/db/migration` 中尚未应用的 SQL，并在 `flyway_schema_history` 保存版本与校验和。V1 建立两张业务表；V2 将状态列改为区分大小写，使 `open` 无法绕过只允许 `OPEN` / `CLOSED` 的约束。
+
+已执行的迁移文件保持不变，结构变更使用后续版本。MySQL DDL 不能统一依靠事务回滚，迁移失败时需核查实际结构后修复。Flyway clean 已禁用，已有非空数据库也不会被自动 baseline。
+
+普通 `verify` 执行领域测试与不依赖数据库的 HTTP 合约测试。准备好独立测试库后，执行完整 MySQL 验证：
+
+```text
+.\mvnw.cmd --batch-mode --no-transfer-progress -Pmysql-it verify
+```
+
+Linux / macOS 使用 `./mvnw`。`mysql-it` 是 Maven 构建配置；它启用 Failsafe 执行 `DatabaseMigrationIT`，不是 Spring profile。集成测试固定使用 `campus_flow_it`，数据写入测试通过事务回滚，测试不调用 clean。
+
+CI 除 Windows / Linux 的普通构建外，还在独立 MySQL 服务中执行同一套数据库测试。工作流中的密码仅用于每次运行时创建并销毁的 CI 数据库。
 
 ## 项目结构
 

@@ -1,6 +1,23 @@
 spring:
+  config:
+    import: optional:file:.env[.properties]
   application:
     name: campus-flow
+  datasource:
+    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:13306}/${DB_NAME:campus_flow}?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true
+    username: ${DB_USERNAME:campus_flow}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 5000
+      validation-timeout: 2000
+  flyway:
+    clean-disabled: true
+    validate-on-migrate: true
+    baseline-on-migrate: false
+  sql:
+    init:
+      mode: never
   lifecycle:
     timeout-per-shutdown-phase: 20s
   mvc:
@@ -29,3 +46,6 @@ management:
       show-components: never
       probes:
         enabled: true
+      group:
+        readiness:
+          include: readinessState,db

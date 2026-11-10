@@ -15,7 +15,9 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -25,12 +27,19 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "spring.autoconfigure.exclude="
                         + "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,"
                         + "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration",
-                "management.endpoint.health.group.readiness.include=readinessState"
+                "management.endpoint.health.group.readiness.include=readinessState",
+                "campus.booking.maintenance=false"
         })
 class HttpContractTest {
 
     @MockitoBean
     private ResourceService resourceService;
+
+    @MockitoBean
+    private JdbcTemplate jdbcTemplate;
+
+    @MockitoBean
+    private PlatformTransactionManager transactionManager;
 
     @LocalServerPort
     private int port;

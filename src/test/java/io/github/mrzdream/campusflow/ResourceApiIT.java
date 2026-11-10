@@ -12,6 +12,7 @@ import java.util.UUID;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.mrzdream.campusflow.account.TokenService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +30,9 @@ class ResourceApiIT {
 
     @Autowired
     private JdbcTemplate jdbc;
+
+    @Autowired
+    private TokenService tokens;
 
     @LocalServerPort
     private int port;
@@ -148,11 +152,14 @@ class ResourceApiIT {
     private HttpResponse<String> request(String method, String path, String body) throws Exception {
         HttpRequest.BodyPublisher publisher = body == null
                 ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body);
-        HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
                 .timeout(Duration.ofSeconds(10))
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, application/problem+json")
-                .method(method, publisher).build();
-        return client.send(request, HttpResponse.BodyHandlers.ofString());
+                .method(method, publisher);
+        if (method.equals("POST")) {
+            request.header("Authorization", "Bearer " + tokens.issue(1L, "ADMIN").accessToken());
+        }
+        return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
     }
 }

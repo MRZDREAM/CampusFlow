@@ -44,10 +44,15 @@ server:
     include-binding-errors: never
 
 management:
+  health:
+    redis:
+      enabled: false
+    rabbit:
+      enabled: false
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,prometheus
   endpoint:
     health:
       show-details: never
@@ -57,3 +62,11 @@ management:
       group:
         readiness:
           include: readinessState,db
+
+campus:
+  auth:
+    jwt-key: ${CAMPUS_JWT_KEY:}
+    admin-username: ${CAMPUS_ADMIN_USERNAME:}
+    admin-password: ${CAMPUS_ADMIN_PASSWORD:}
+  booking:
+    offer-duration: ${CAMPUS_OFFER_DURATION:5m}

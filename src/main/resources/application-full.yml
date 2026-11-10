@@ -1,0 +1,42 @@
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:16379}
+      password: ${REDIS_PASSWORD:}
+      connect-timeout: 750ms
+      timeout: 750ms
+  rabbitmq:
+    host: ${RABBIT_HOST:127.0.0.1}
+    port: ${RABBIT_PORT:5672}
+    username: ${RABBIT_USERNAME:campus_flow}
+    virtual-host: ${RABBIT_VHOST:campus-flow}
+    password: ${RABBIT_PASSWORD}
+    connection-timeout: 2s
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        prefetch: 10
+        concurrency: 2
+        default-requeue-rejected: false
+
+campus:
+  redis:
+    enabled: true
+  delivery:
+    enabled: true
+
+management:
+  health:
+    redis:
+      enabled: true
+    rabbit:
+      enabled: true
+  endpoint:
+    health:
+      group:
+        readiness:
+          include: readinessState,db,redis,rabbit

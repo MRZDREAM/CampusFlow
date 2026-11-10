@@ -1,118 +1,77 @@
 # CampusFlow
 
-校园共享工作站的资源预约与候补服务。业务以固定时段和有限名额为基础，围绕预约、取消、候补晋升与名额一致性逐步实现。
+校园共享工作站预约与候补服务。管理员维护资源和时段；用户查看可用名额、预约、取消，满额时加入候补并在期限内确认。
 
-## 已实现
+- **MySQL**：版本化建表，保存账号、时段、订单、候补和异步请求；名额变更与业务记录在同一事务内提交。
+- **Redis**：时段查询短期缓存；Lua 原子检查重复在途请求和临时入口额度。最终预约结果由 MySQL 决定。
+- **RabbitMQ**：持久化异步请求、发布确认、手动消费确认、延迟重试和死信。提交返回请求编号，可查询最终状态。
+- **身份与观察**：密码使用 BCrypt 哈希，JWT 区分管理员与普通用户；Swagger UI、健康探针和管理员 Prometheus 指标。
 
-- Java 21、Spring Boot 3.5.16、Spring MVC 应用基础。
-- Maven Wrapper 固定构建工具版本，构建阶段检查 Java 与 Maven 版本。
-- 健康检查、存活探针、就绪探针；管理端点仅开放健康信息。
-- HTTP 404 / 405 使用 RFC 9457 Problem Details 响应。
-- 不可变时段与容量对象，校验时间边界、区间重叠、预约与释放的容量约束。
-- 领域边界测试和真实 HTTP 集成测试。
-- MySQL 8.4 数据源与连接池，UTC 会话时间和外置本地凭据。
-- Flyway 11.20.3 版本化建表、校验已应用脚本；资源与时段的数据库约束、外键和查询索引。
-- 真实 MySQL 集成测试：迁移重入、校验和变更、字段约束、关联完整性与就绪探针。
-- 资源创建、详情与分页列表接口；请求校验、名称规范化和明确的 400 / 404 错误响应。
-- JPA 映射校验、服务层事务和独立响应 DTO；表结构仍由 Flyway 管理。
-- GitHub Actions 在 Windows / Linux 上执行构建与测试。
+业务和数据规则见 [领域设计](docs/domain-model.md)，故障行为见 [故障验证](docs/failure-cases.md)。
 
-资源管理接口已接入数据库。时段管理接口、预约事务和并发控制尚未实现。当前接口用于开发验证，身份认证与操作授权尚未接入。Redis、RabbitMQ 与候补流程属于后续实现范围；性能结果将在真实压测后记录。
+## 完整模式运行
 
-## 构建与运行
+准备 JDK 21、Docker Compose 和 PowerShell。在项目根目录执行：
 
-需要完整的 JDK 21。`JAVA_HOME` 指向 JDK 根目录；首次构建需要联网下载 Maven 与项目依赖。运行应用需要 MySQL 8.4。
-
-将 `.env.example` 复制为 `.env`，替换两个示例密码，分别用于应用用户和数据库管理员。`.env` 使用 properties 兼容格式，值不额外包引号；文件不会纳入 Git。应用从当前工作目录读取该文件，系统环境变量可以覆盖其中的配置。
-
-如果已安装 Docker Compose，可在项目根目录启动固定版本的本地数据库：
-
-```text
-docker compose up -d --wait mysql
-```
-
-默认端口为 `127.0.0.1:13306`，数据库为 `campus_flow`，应用账号为 `campus_flow`。初始化脚本还创建独立的 `campus_flow_it` 测试库，并赋予该账号测试库权限。已有数据卷不会重复执行容器初始化脚本。
-
-也可以使用自行安装的 MySQL。需事先创建上述两个数据库和应用账号，并将连接信息写入 `.env` 或对应环境变量。应用不使用 root 账号。容器停止命令为 `docker compose stop mysql`，停止不会清空数据卷。
-
-Windows（CMD 或 PowerShell）：
-
-```text
-.\mvnw.cmd --version
+```powershell
+.\scripts\init-local.ps1
+docker compose up -d --wait mysql redis rabbitmq
 .\mvnw.cmd --batch-mode --no-transfer-progress verify
+$env:SPRING_PROFILES_ACTIVE = 'full'
 java -jar target/campus-flow-0.1.0-SNAPSHOT.jar
 ```
 
-Linux / macOS：
+初始化脚本生成仅本机使用的 .env 凭据，保留已有的非空配置。应用首次启动时按配置创建管理员；改启动密码不会覆盖已经存在的管理员密码。若原生 MySQL 已在 13306 运行，只启动容器里的 Redis 和 RabbitMQ，并继续连接原生 MySQL。Linux / macOS 可用 `./mvnw` 构建、用 `SPRING_PROFILES_ACTIVE=full java -jar ...` 启动。
 
-```sh
-./mvnw --version
-./mvnw --batch-mode --no-transfer-progress verify
-java -jar target/campus-flow-0.1.0-SNAPSHOT.jar
+默认地址：
+
+| 功能 | 地址 |
+| --- | --- |
+| API 与 Swagger UI | http://localhost:8080/swagger-ui/index.html |
+| 就绪检查 | http://localhost:8080/actuator/health/readiness |
+| Redis | 127.0.0.1:16379 |
+| RabbitMQ AMQP / 管理页 | 127.0.0.1:5672 / http://127.0.0.1:15672 |
+| MySQL | 127.0.0.1:13306 |
+
+RabbitMQ 管理页用 .env 中的 RABBIT_USERNAME（缺省 campus_flow）和 RABBIT_PASSWORD。容器端口只绑定到本机。可用 `docker compose stop mysql redis rabbitmq` 停止容器并保留数据。
+
+本机只验证数据库功能时，可不启用 full。Redis 模式和异步路由需要 full。未提供 CAMPUS_JWT_KEY 时，服务使用进程内随机签名密钥，重启后旧令牌失效；多实例应配置同一把私密密钥。生产部署还需按实际环境设置 TLS、凭据管理及备份。
+
+## API 主线
+
+| 方法与地址（前缀 /api/v1） | 行为 |
+| --- | --- |
+| POST /auth/register、/auth/login | 注册普通账号、登录取得 Bearer JWT |
+| POST /resources、PATCH /resources/{id}/status | 管理员创建、开放或关闭资源 |
+| GET /resources、/resources/{id} | 查询资源分页与详情 |
+| POST /resources/{id}/slots | 管理员创建 UTC 时段；相邻允许，重叠拒绝 |
+| GET /resources/{id}/slots、/slots/{slotId}（资源路径下） | 查询最多 100 个未来时段或指定时段 |
+| PATCH /resources/{id}/slots/{slotId}/status | 管理员调整时段开放状态 |
+| POST /reservations?mode=DB 或 REDIS | 同步预约指定时段；请求体含 slotId |
+| GET /reservations、/reservations/{id} | 查询自己的预约，可传 beforeId 获取更早记录 |
+| POST /reservations/{id}/cancellation | 取消自己的预约，重放只释放一次 |
+| POST /waitlist、GET /waitlist、GET /waitlist/{id} | 加入和查询自己的候补；加入请求体含 slotId |
+| POST /waitlist/{id}/confirmation 或 /cancellation | 确认限时名额，或退出候补 |
+| POST /reservation-requests | 异步预约，带 UUID 类型 Idempotency-Key，返回 202 和 Location |
+| GET /reservation-requests/{id} | 查询自己的异步请求是否 PENDING / SUCCEEDED / REJECTED / FAILED |
+
+查询他人的订单或请求返回 404。资源和时段公开可读，管理操作要求管理员角色。202 表示请求已持久化，收到 SUCCEEDED 才表示预约成功。Swagger 的 Authorize 输入登录响应中的 accessToken。
+
+## 演示、测试和压测
+
+应用运行后，在另一个 PowerShell 窗口执行：
+
+```powershell
+.\scripts\demo.ps1
 ```
 
-应用默认监听 `8080`，可通过 `PORT` 环境变量修改。健康检查：
+脚本通过真实接口生成三位模拟用户及独立时段，演示候补递补、重复取消、Redis 模式和异步预约。每次运行创建一组新的演示记录。仅 MySQL 模式使用 `-DatabaseOnly`。
 
-```sh
-curl http://localhost:8080/actuator/health
-```
+- `./mvnw verify`：领域与 HTTP 测试。
+- `./mvnw -Pmysql-it verify`：追加真实 MySQL 验证；Windows 使用 `.\mvnw.cmd`。测试数据库固定为 campus_flow_it。
+- 同时设置 CAMPUS_FULL_IT=true 时，集成测试还使用 Redis 的 15 号数据库和 RabbitMQ 的 campus-flow-it 虚拟主机。该虚拟主机和权限需提前创建；CI 提供独立的服务实例。勿用业务虚拟主机代替。
+- [压测方法](docs/benchmark.md) 包括三种预约方式、数据生成、统计口径和边界。健康及基础 HTTP 指标外，Prometheus 可观察缓存、Lua、发布重试、确认和死信等操作。
 
-预期返回 HTTP 200，JSON 中的 `status` 为 `UP`。`/actuator/health/liveness` 检查应用存活状态；`/actuator/health/readiness` 同时检查应用就绪状态和数据库连接。数据库中断后，就绪检查应返回 HTTP 503，存活检查不因数据库中断而失败。健康检查不公开组件详情。
+## 工程边界
 
-## 数据库迁移与验证
-
-应用启动时，Flyway 按顺序执行 `src/main/resources/db/migration` 中尚未应用的 SQL，并在 `flyway_schema_history` 保存版本与校验和。V1 建立两张业务表；V2 将状态列改为区分大小写，使 `open` 无法绕过只允许 `OPEN` / `CLOSED` 的约束。
-
-已执行的迁移文件保持不变，结构变更使用后续版本。MySQL DDL 不能统一依靠事务回滚，迁移失败时需核查实际结构后修复。Flyway clean 已禁用，已有非空数据库也不会被自动 baseline。
-
-普通 `verify` 执行领域测试与不依赖数据库的 HTTP 合约测试。准备好独立测试库后，执行完整 MySQL 验证：
-
-```text
-.\mvnw.cmd --batch-mode --no-transfer-progress -Pmysql-it verify
-```
-
-Linux / macOS 使用 `./mvnw`。`mysql-it` 是 Maven 构建配置；它启用 Failsafe 执行 `DatabaseMigrationIT` 和 `ResourceApiIT`，不是 Spring profile。集成测试固定使用 `campus_flow_it`。数据库约束测试的数据通过事务回滚；真实 HTTP 测试在请求提交后，仅清理各自生成的随机名称记录。测试不调用 Flyway clean。
-
-CI 除 Windows / Linux 的普通构建外，还在独立 MySQL 服务中执行同一套数据库测试。工作流中的密码仅用于每次运行时创建并销毁的 CI 数据库。
-
-## 资源接口
-
-| 方法与路径 | 行为 | 成功响应 |
-| --- | --- | --- |
-| POST /api/v1/resources | 创建资源 | 201，Location 指向详情地址 |
-| GET /api/v1/resources/{id} | 按正整数编号查询 | 200；不存在时为 404 |
-| GET /api/v1/resources?page=0&size=20 | 按编号升序分页查询 | 200，含 content 和分页统计 |
-
-创建请求只接收 name 和 description。名称去掉首尾空白后必须有内容，长度上限为 120；描述可省略，上限为 1000。长度按 Java 字符串的 UTF-16 单元计。编号由数据库分配，初始状态由服务端设为 OPEN。请求中的额外字段当前会被忽略，不能用于指定编号或状态。
-
-```json
-{"name":"GPU 工作站","description":"共享计算设备"}
-```
-
-响应字段为 id、name、description、status。未提供描述时返回空字符串。名称不要求唯一，同名资源可以代表不同设备。
-
-分页从 0 开始，page 范围为 0～10000，size 范围为 1～100，默认分别为 0 和 20。超出已有数据的页返回空 content。采用独立分页响应，避免把框架内部对象作为公开 JSON 合约；并发插入期间不保证多次分页请求共享同一快照。
-
-非法字段返回 400 / VALIDATION_FAILED，并列出 errors；错误 JSON 或参数类型返回 400 / INVALID_REQUEST；资源不存在返回 404 / RESOURCE_NOT_FOUND。错误响应使用 application/problem+json。
-
-Hibernate 使用 ddl-auto: validate，只校验已映射的列，不修改结构。资源创建和更新时间仍由数据库默认值维护，本批暂不映射和返回这些列。open-in-view 关闭，响应 DTO 在服务事务内构建。
-
-## 项目结构
-
-```text
-src/main/java/io/github/mrzdream/campusflow/
-├── CampusFlowApplication.java
-├── resource/
-│   ├── api/                 # HTTP 路由
-│   ├── application/         # 服务与事务
-│   ├── domain/              # 资源实体、状态和时段值对象
-│   ├── dto/                 # 请求与响应数据
-│   └── persistence/         # JPA Repository
-└── web/                     # HTTP 异常响应
-```
-
-业务代码按功能模块组织。领域对象负责局部业务规则；资源服务组织创建和查询事务。预约涉及的多表一致性与并发控制将在相应模块实现。
-
-## 设计与演进
-
-业务规则、模型关系及并发边界见 [领域设计](docs/domain-model.md)。后续依次实现数据库预约闭环、并发控制、认证、Redis / Lua、异步预约、候补与故障恢复。
+Flyway V1–V4 逐次迁移，Hibernate 只校验映射。Redis 和消息队列支持独立故障与恢复，无法提供跨服务的单次事务；对账依据仍是 MySQL 中的订单、候补占用与请求终态。详情见 [领域设计](docs/domain-model.md)。

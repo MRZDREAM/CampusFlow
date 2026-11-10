@@ -19,5 +19,39 @@ services:
       retries: 20
       start_period: 20s
 
+  redis:
+    image: redis:7.4.12-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-16379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "if [ -n \"$${REDIS_PASSWORD}\" ]; then export REDISCLI_AUTH=\"$${REDIS_PASSWORD}\"; fi; redis-cli ping | grep -qx PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  rabbitmq:
+    image: rabbitmq:4.3.7-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USERNAME:-campus_flow}
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD:-}
+      RABBITMQ_DEFAULT_VHOST: ${RABBIT_VHOST:-campus-flow}
+    ports:
+      - "127.0.0.1:${RABBIT_PORT:-5672}:5672"
+      - "127.0.0.1:${RABBIT_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbit-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 25
+
 volumes:
   mysql-data:
+  redis-data:
+  rabbit-data:

@@ -38,7 +38,7 @@ jobs:
         run: .\mvnw.cmd --batch-mode --no-transfer-progress verify
 
   mysql:
-    name: MySQL 8.4 integration
+    name: MySQL, Redis and RabbitMQ integration
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -56,11 +56,37 @@ jobs:
           --health-interval=5s
           --health-timeout=3s
           --health-retries=30
+      redis:
+        image: redis:7.4.12-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=15
+      rabbitmq:
+        image: rabbitmq:4.3.7-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: campus_flow
+          RABBITMQ_DEFAULT_PASS: ci-broker-password
+          RABBITMQ_DEFAULT_VHOST: campus-flow-it
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd="rabbitmq-diagnostics -q ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=25
     env:
       DB_HOST: 127.0.0.1
       DB_PORT: 3306
       DB_USERNAME: campus_flow
       DB_PASSWORD: ci-application-password
+      CAMPUS_FULL_IT: 'true'
+      REDIS_PORT: 6379
+      RABBIT_PASSWORD: ci-broker-password
+      MYSQL_ROOT_PASSWORD: ci-root-password
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -70,5 +96,46 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - name: Verify migrations and database constraints
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+      - name: Verify booking, MySQL constraints, Redis Lua and broker recovery
         run: ./mvnw --batch-mode --no-transfer-progress -Pmysql-it verify
+      - name: Run packaged demo and compare booking modes
+        env:
+          DB_NAME: campus_flow_it
+          RABBIT_VHOST: campus-flow-it
+          CAMPUS_ADMIN_USERNAME: ci-admin
+          CAMPUS_ADMIN_PASSWORD: ci-only-demo-password
+          SPRING_PROFILES_ACTIVE: full
+          REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar target/campus-flow-0.1.0-SNAPSHOT.jar --server.port=18080 --server.address=127.0.0.1 > target/demo-server.log 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid" 2>/dev/null || true; tail -n 28 target/demo-server.log' EXIT
+          ready=0
+          for attempt in {1..45}; do
+            if curl --fail --silent http://127.0.0.1:18080/actuator/health/readiness > /dev/null; then
+              ready=1
+              break
+            fi
+            kill -0 "$app_pid"
+            sleep 1
+          done
+          test "$ready" -eq 1
+          curl --fail --silent http://127.0.0.1:18080/swagger-ui/index.html > /dev/null
+          pwsh -NoProfile -File scripts/demo.ps1 -BaseUrl http://127.0.0.1:18080
+          for mode in DB REDIS MQ; do
+            pwsh -NoProfile -File scripts/benchmark.ps1 -BaseUrl http://127.0.0.1:18080 -Mode "$mode" -Users 100 -Capacity 10 -Concurrency 32
+          done
+          docker stop "$REDIS_CONTAINER_ID" > /dev/null
+          pwsh -NoProfile -File scripts/benchmark.ps1 -BaseUrl http://127.0.0.1:18080 -Mode REDIS -Users 12 -Capacity 2 -Concurrency 4
+          docker start "$REDIS_CONTAINER_ID" > /dev/null
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:18080/actuator/health/readiness > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1

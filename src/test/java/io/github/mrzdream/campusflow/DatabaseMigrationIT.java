@@ -42,11 +42,11 @@ class DatabaseMigrationIT {
     @Test
     void migrationsAreRecordedAndRunningAgainDoesNotReapplyThem() {
         assertThat(jdbc.queryForObject("SELECT DATABASE()", String.class)).isEqualTo("campus_flow_it");
-        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("2");
+        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("4");
         assertThat(flyway.migrate().migrationsExecuted).isZero();
         assertThat(jdbc.queryForObject(
-                "SELECT COUNT(*) FROM flyway_schema_history WHERE version IN ('1', '2') AND success = 1",
-                Integer.class)).isEqualTo(2);
+                "SELECT COUNT(*) FROM flyway_schema_history WHERE version IN ('1', '2', '3', '4') AND success = 1",
+                Integer.class)).isEqualTo(4);
     }
 
     @Test
